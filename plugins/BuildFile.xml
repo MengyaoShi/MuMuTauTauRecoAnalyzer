@@ -17,4 +17,6 @@
 <use name="root"/>
 <use name="rootgraphics"/>
 <use name="fastjet"/>
+<use name="FWCore/ServiceRegistry"/>
+<use name="CommonTools/UtilAlgos"/>
 <flags EDM_PLUGIN="1"/>

@@ -63,6 +63,8 @@
 #include <fastjet/GhostedAreaSpec.hh>
 #include <fastjet/ClusterSequenceArea.hh>
 #include "fastjet/tools/Pruner.hh"
+#include "FWCore/ServiceRegistry/interface/Service.h"
+#include "CommonTools/UtilAlgos/interface/TFileService.h"
 //trigger stuff
 //#include "DataFormats/HLTReco/interface/TriggerObject.h"
 //#include "DataFormats/Common/interface/TriggerResults.h"
@@ -97,25 +99,18 @@ class MuMuTauTauRecoAnalyzer : public edm::one::EDAnalyzer<edm::one::SharedResou
    private:
       virtual void beginJob() override;
       virtual void analyze(const edm::Event&, const edm::EventSetup&) override;
+      void reset(const bool);
       virtual void endJob() override; 
- void reset(const bool);      
 // ----------member data ---------------------------
-      TH1F* muHadMass_;
-      TH2F* InvMass2D_;
-      TH1F* mumuInvMass_;
-      TH1F* FourBInvMass_;
-      TH1F* DR_;
-      TH1F* DR23_;
-      TH1F* DR13_;
   edm::EDGetTokenT<reco::PFTauRefVector> tauTag_;
-  edm::EDGetTokenT<edm::RefVector<std::vector<reco::Muon>>> muonTag1_;
-  edm::EDGetTokenT<edm::RefVector<std::vector<reco::Muon>>> muonTag2_; 
+  edm::EDGetTokenT<edm::RefVector<std::vector<reco::Muon>>> Mu1Mu2_;
   edm::EDGetTokenT<reco::GenParticleCollection> genParticleTag_;
   edm::EDGetTokenT<edm::ValueMap<reco::MuonRefVector>>  jetMuonMapTag_;
   std::vector<double> muHadMassBins_;
   std::vector<double> FourBInvMassBins_;
-  TFile* out_;
- std::string outFileName_;
+  TFile *out_;
+  TH1F *muHadMass_;
+  std::string outFileName_;
 };
 
 //
@@ -131,8 +126,7 @@ class MuMuTauTauRecoAnalyzer : public edm::one::EDAnalyzer<edm::one::SharedResou
 //
 MuMuTauTauRecoAnalyzer::MuMuTauTauRecoAnalyzer(const edm::ParameterSet& iConfig):
   tauTag_(consumes<reco::PFTauRefVector>(iConfig.getParameter<edm::InputTag>("tauTag"))),
-  muonTag1_(consumes<edm::RefVector<std::vector<reco::Muon>>>(iConfig.getParameter<edm::InputTag>("muonTag1"))),
-  muonTag2_(consumes<edm::RefVector<std::vector<reco::Muon>>>(iConfig.getParameter<edm::InputTag>("muonTag2"))),
+  Mu1Mu2_(consumes<edm::RefVector<std::vector<reco::Muon>>>(iConfig.getParameter<edm::InputTag>("Mu1Mu2"))),
   genParticleTag_(consumes<reco::GenParticleCollection>(iConfig.getParameter<edm::InputTag>("genParticleTag"))),
   jetMuonMapTag_(consumes<edm::ValueMap<reco::MuonRefVector> >(iConfig.getParameter<edm::InputTag>("jetMuonMapTag"))),
   muHadMassBins_(iConfig.getParameter<std::vector<double> >("muHadMassBins")),
@@ -140,7 +134,6 @@ MuMuTauTauRecoAnalyzer::MuMuTauTauRecoAnalyzer(const edm::ParameterSet& iConfig)
   outFileName_(iConfig.getParameter<std::string>("outFileName"))
 {
    //now do what ever initialization is needed
-   usesResource("TFileService");
    reset(false);
 }
 
@@ -150,7 +143,7 @@ MuMuTauTauRecoAnalyzer::~MuMuTauTauRecoAnalyzer()
  
    // do anything here that needs to be done at desctruction time
    // (e.g. close files, deallocate resources etc.)
-  reset(true);
+   reset(true);
 }
 
 
@@ -167,12 +160,9 @@ MuMuTauTauRecoAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup&
   edm::Handle<reco::PFTauRefVector> pTaus;
   iEvent.getByToken(tauTag_, pTaus);  
  
-  edm::Handle<edm::RefVector<std::vector<reco::Muon>>> pMuons1;
-  iEvent.getByToken(muonTag1_, pMuons1);
+  edm::Handle<edm::RefVector<std::vector<reco::Muon>>> pMu1Mu2;
+  iEvent.getByToken(Mu1Mu2_, pMu1Mu2);
   
-  edm::Handle<edm::RefVector<std::vector<reco::Muon>>> pMuons2;
-  iEvent.getByToken(muonTag2_,pMuons2); 
- 
   edm::Handle<reco::GenParticleCollection> pGenParticles;
    iEvent.getByToken(genParticleTag_, pGenParticles);
 
@@ -201,16 +191,7 @@ MuMuTauTauRecoAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup&
     const reco::MuonRefVector& removedMuons = (*pMuonJetMap)[tauJetRef];
     
     //make a collection of corrected old jets in |eta| < 2.4 not overlapping the W muon or tau
-  int nearestGenObjKey=-1;
   std::vector<reco::MuonRef> removedMuonRefs;
-  const reco::GenParticle* nearestGenObj= Common::nearestObject(*iTau, genObjPtrs, nearestGenObjKey);
-   int pdgID=nearestGenObj->motherRef()->pdgId();
-   if(fabs(pdgID)==511||fabs(pdgID)==521||fabs(pdgID)==411||fabs(pdgID)==441)
-     DR_->Fill(reco::deltaR((*iTau)->eta(), (*iTau)->phi(), nearestGenObj->eta(), nearestGenObj->phi()));
-   if(fabs(pdgID)==23)
-     DR23_->Fill(reco::deltaR((*iTau)->eta(), (*iTau)->phi(), nearestGenObj->eta(), nearestGenObj->phi()));
-   if(fabs(pdgID)==13)
-     DR13_->Fill(reco::deltaR((*iTau)->eta(), (*iTau)->phi(), nearestGenObj->eta(), nearestGenObj->phi()));
 
    for (reco::MuonRefVector::const_iterator iMuon = removedMuons.begin(); 
 	 iMuon != removedMuons.end(); ++iMuon) { removedMuonRefs.push_back(*iMuon); }
@@ -219,49 +200,43 @@ MuMuTauTauRecoAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup&
 
    double muHadMassForPlotting = muHadMass;
    muHadMass_->Fill(muHadMassForPlotting, PUWeight*tauHadPTWeight*HiggsPTWeight);
-   for(typename edm::RefVector<std::vector<reco::Muon>>::const_iterator iMuon2=pMuons2->begin();iMuon2!=pMuons2->end(); ++iMuon2)
-   {
-     for(typename edm::RefVector<std::vector<reco::Muon>>::const_iterator iMuon1=pMuons1->begin(); iMuon1!=pMuons1->end();++iMuon1)
-     {
-       const double mumuInvMass =
-         ((*iMuon1)->p4()+(*iMuon2)->p4()).M();
-       const double FourBInvMass=((*iMuon1)->p4()+(*iMuon2)->p4()+removedMuonRefs[removedMuonRefs.size() - 1]->p4() + (*iTau)->p4()).M();
-       InvMass2D_->Fill(mumuInvMass, muHadMassForPlotting);
-       InvMass2D_->SetXTitle("Invariant mass of di-muon(GeV)");
-       InvMass2D_->SetYTitle("Invariant mass m_{#mu+X} (GeV)");
-       mumuInvMass_->Fill(mumuInvMass);
-       mumuInvMass_->SetXTitle("Invariant mass of di-muon(GeV)");
-       FourBInvMass_->Fill(FourBInvMass);
-     }
-   }
+   
+   //std::vector<reco::Muon*> Mu1Mu2Ptrs;
+ // reco::Muon* HighestPtMu1Mu2;
+ // reco::Muon* LowestPtMu1Mu2;
+ // if((*pMu1Mu2)[0]->pt()> (*pMu1Mu2)[1]->pt()){
+  //  HighestPtMu1Mu2=const_cast<reco::Muon*>(&(*((*pMu1Mu2)[0])));
+  //  LowestPtMu1Mu2=const_cast<reco::Muon*>(&(*((*pMu1Mu2)[1])));
+   // }
+ // else
+  //  {
+   // HighestPtMu1Mu2=const_cast<reco::Muon*>(&(*((*pMu1Mu2)[1])));
+   // LowestPtMu1Mu2=const_cast<reco::Muon*>(&(*((*pMu1Mu2)[0])));
+   // }
+
+       //const double mumuInvMass =
+         //(HighestPtMu1Mu2->p4()+LowestPtMu1Mu2->p4()).M();
+       //const double FourBInvMass=(HighestPtMu1Mu2->p4()+LowestPtMu1Mu2->p4()+removedMuonRefs[removedMuonRefs.size() - 1]->p4() + (*iTau)->p4()).M();
     ++iTau;
   }
 }
 
+void 
+MuMuTauTauRecoAnalyzer::reset(const bool doDelete)
+{
+  if(doDelete && (out_ !=NULL)) delete out_;
+  out_=NULL;
+  if(doDelete && (muHadMass_!=NULL)) delete muHadMass_;
+  muHadMass_=NULL;
+}
 
 // ------------ method called once each job just before starting event loop  ------------
 void 
 MuMuTauTauRecoAnalyzer::beginJob()
 {
-  out_ = new TFile(outFileName_.c_str(), "RECREATE");
-  DR_=
-    new TH1F("DR_nearestMu_tau", "DR between nearestMuon with mom absolute pdgID 511 521 411 441 to input tau", 100, 0, 1.0);
- DR23_=
-    new TH1F("DR_nearestMu_tau", "DR between nearestMuon with mom pdgID 23 to input tau", 100, 0, 1.0);
- DR13_=
-    new TH1F("DR_nearestMu_tau", "DR between nearestMuon with mom absolute pdgID 13 to input tau", 100, 0, 1.0);
+  out_= new TFile(outFileName_.c_str(),"RECREATE");
+  muHadMass_=new TH1F("muHadMass", ";H750a09 m_{#mu+X} (GeV);", muHadMassBins_.size()-1, &muHadMassBins_[0]);  
 
-  muHadMass_=
-    new TH1F("H750a09 muHadMass", ";H750a09 m_{#mu+X} (GeV);", muHadMassBins_.size()-1, &muHadMassBins_[0]);
-    muHadMass_->Sumw2();
-  InvMass2D_=
-    new TH2F("H750a09 InvMass",";H750a09 mumuInvtMass  (GeV);",14, 0, 14,14, 0, 14 );
-  mumuInvMass_= 
-    new TH1F("H750a09 mumuInvMass",";H750a09 mumuInvtMass", muHadMassBins_.size() - 1, &muHadMassBins_[0] ); 
-  mumuInvMass_->Sumw2();
-  FourBInvMass_=
-    new TH1F("H750a09 four object final state Invariant Mass", "; H750a09 Four object invariant Mass", FourBInvMassBins_.size() -1, &FourBInvMassBins_[0]);
-  FourBInvMass_->Sumw2();
 }
 
 
@@ -269,51 +244,12 @@ MuMuTauTauRecoAnalyzer::beginJob()
 void 
 MuMuTauTauRecoAnalyzer::endJob() 
 {
- out_->cd();
-  TCanvas muHadMassCanvas("muHadMassCanvas", "", 600, 600);
-  TCanvas InvMass2DCanvas("InvMass2DCanvas","",600,600);
-  TCanvas FourBInvMassCanvas("FourBInvMassCanvas","",600,600);
-  TCanvas mumuInvMassCanvas("mumuInvMassCanvas","",600,600);
-  TCanvas DRCanvas("DR_nearestMu(mom 511 521 441 411)_tau","",600,600);
-  TCanvas DR23Canvas("DR_nearestMu(mom 23)_tau","",600,600);
-  TCanvas DR13Canvas("DR_nearestMu(mom 13)_tau","",600,600);
+  out_->cd();
+  TCanvas muHadMassCanvas("muHadMassCanvas","",600,600);
   Common::draw1DHistograms(muHadMassCanvas, muHadMass_);
-  Common::draw2DHistograms(InvMass2DCanvas, InvMass2D_);
-  Common::draw1DHistograms(FourBInvMassCanvas, FourBInvMass_);
-  Common::draw1DHistograms(mumuInvMassCanvas, mumuInvMass_);
-  Common::draw1DHistograms(DRCanvas, DR_);
-  Common::draw1DHistograms(DR23Canvas, DR23_);
-  Common::draw1DHistograms(DR13Canvas, DR13_);
   out_->cd();
   muHadMassCanvas.Write();
-  InvMass2DCanvas.Write();
-  FourBInvMassCanvas.Write();
-  mumuInvMassCanvas.Write();
-  DRCanvas.Write();
-  DR23Canvas.Write();
-  DR13Canvas.Write();
-  out_->Write();
   out_->Close();
-}
-void
-MuMuTauTauRecoAnalyzer::reset(const bool doDelete)
-{
-  if (doDelete && (out_ != NULL)) delete out_;
-  out_ = NULL;
- if (doDelete && (muHadMass_ != NULL)) delete muHadMass_;
-  muHadMass_ = NULL;
-  if (doDelete && (InvMass2D_ != NULL)) delete InvMass2D_;
-  InvMass2D_ = NULL;
-  if(doDelete && (mumuInvMass_!=NULL)) delete mumuInvMass_;
-  mumuInvMass_=NULL;
-  if(doDelete && (FourBInvMass_!=NULL)) delete FourBInvMass_;
-  FourBInvMass_=NULL;
-  if (doDelete &&(DR_!=NULL)) delete DR_;
-  DR_ =NULL;
-  if (doDelete &&(DR23_!=NULL)) delete DR23_;
-  DR23_ =NULL;
-  if (doDelete &&(DR13_!=NULL)) delete DR13_;
-  DR13_ =NULL;
 }
 
 // ------------ method fills 'descriptions' with the allowed parameters for the module  ------------
